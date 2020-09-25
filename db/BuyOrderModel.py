@@ -1,7 +1,7 @@
-from . import db
-
 from datetime import datetime
 from marshmallow import fields, Schema
+
+from app import db
 
 class BuyOrder(db.Model):
     id = db.Column(db.Integer, primary_key=True)

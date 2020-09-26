@@ -10,97 +10,97 @@ from db.TransactionModel import Transaction, transaction_schema
 from app import db
 
 def add_to_transactions(stock_symbol, buy_order_id, sell_order_id, units, price):
- 	new_transaction = Transaction(
+
+	new_transaction = Transaction(
     	stock_symbol = stock_symbol,
     	buy_order_id = buy_order_id,
     	sell_order_id = sell_order_id,
     	units = units,
     	price = price
     	)
- 	db.session.add(new_transaction)
- 	db.session.commit()
-
-def best_price(orders):
-	options = []
-	best_price = orders[0].limit_price
-	for item in orders:
-		if item.limit_price != best_price:
-			#no more options at that price
-			exit()
-		options.append(item)
-
-	#if there were multiple options at best price, sort by time
-	options.sort(key=lambda x: x.order_time)
-	return options[0].limit_price
+	db.session.add(new_transaction)
+	db.session.commit()
 
 def matching(order, order_type):
 
-	#add where clauses
-	sell_list = SellOrder.query.all()
-	sell_list.sort(key=lambda x: x.limit_price)
+	#get only sell orders that have not been fulfilled completely, and order them by acesending price
+	sell_list = db.session.query(SellOrder).filter(SellOrder.units!=SellOrder.units_fulfilled).filter(SellOrder.stock_symbol==order.stock_symbol).order_by(SellOrder.limit_price.desc()).order_by(SellOrder.order_time).all()
 
-	buy_list = BuyOrder.query.all()
-	buy_list.sort(key=lambda x: x.limit_price, reverse=True)
+	#get only buy orders that have not been fulfilled completely and order them by descending price
+	buy_list = db.session.query(BuyOrder).filter(BuyOrder.units!=BuyOrder.units_fulfilled).filter(SellOrder.stock_symbol==order.stock_symbol).order_by(BuyOrder.limit_price).all()
 
-	if order_type == 'buy' and order.limit_price >= best_price(sell_list):
-		# Buy order crossed the spread
-		filled = 0
-		consumed_asks = []
-		for i in range(len(buy_list)):
-			ask = buy_list[i]
+	if sell_list:
+		best_ask = sell_list[0].limit_price
+	else:
+		#nothing to sell
+		return
 
-			if ask.limit_price > order.limit_price:
-				break # Price of ask is too high, stop filling order
-			elif filled == order.units:
-				break # Order was filled
+	if buy_list:
+		best_bid = buy_list[0].limit_price
+	else:
+		#nothing buy
+		return
 
-			if filled + ask.units <= order.units: # order not yet filled, ask will be consumed whole
-				filled += ask.units
 
-				#change database and add to transaction table
-				ask.units_fulfilled = ask.units
-				db.session.commit()
-				add_to_transactions(ask.stock_symbol, order.id, ask.id, ask.units, ask.limit_price)
-
-			elif filled + ask.units > order.units: # order is filled, ask will be consumed partially
-				volume = order.units-filled
-				filled += volume
-
-				#change database and add to transaction table
-				ask.units_fulfilled = ask.units_fulfilled + volume
-				db.session.commit()
-				add_to_transactions(ask.stock_symbol, order.id, ask.id, ask.units, ask.limit_price)
-
-	elif order_type == 'sell' and order.limit_price <= best_price(buy_list):
-
-		# Sell order crossed the spread
-		filled = 0
-		consumed_bids = []
+	if order_type == 'buy' and order.limit_price >= best_ask:
+		# Buy order crossed the spread, there is a match
+		shares_to_fill = order.units
+		shares_filled = 0
+		#searching buy list from best to worst buy (highest price to lowest)
 		for i in range(len(sell_list)):
-			bid = sell_list[i]
 
-			if bid.limit_price < order.limit_price:
-				break # Price of bid is too low, stop filling order
-			if filled == order.units:
-				break # Order was filled
+			ask_price = sell_list[i].limit_price
+			bid_price = order.limit_price
 
-			if filled + bid.units <= order.units: # order not yet filled, bid will be consumed whole
-				filled += bid.units
+			midpoint = (ask_price + bid_price) / 2
 
-				#change database and add to transaction table
-				bid.units_fulfilled = bid.units
-				db.session.commit()
-				add_to_transactions(ask.stock_symbol, bid.id, order.id, bid.units, bid.limit_price)
+			shares_to_buy = order.units - order.units_fulfilled
+			shares_to_sell = sell_list[i].units - sell_list[i].units_fulfilled
 
-			elif filled + bid.units > order.units: # order is filled, bid will be consumed partially
-				volume = order.units-filled
-				filled += volume
+			shares_exchanged = 0
 
-				#change database and add to transaction table
-				bid.units_fulfilled = bid.units_fulfilled + volume
-				db.session.commit()
-				add_to_transactions(ask.stock_symbol, bid.id, order.id, bid.units, bid.limit_price)
+			shares_exchanged = min(shares_to_buy, shares_to_sell)
+			shares_filled = shares_filled + shares_exchanged
 
+			#increment shares exchanged
+			order.units_fulfilled = shares_exchanged
+			sell_list[i].units_fulfilled = sell_list[i].units_fulfilled + order.units_fulfilled
+			db.session.commit()
+
+			add_to_transactions(order.stock_symbol, order.id, sell_list[i].id, shares_exchanged, midpoint)
+
+			if shares_filled == shares_to_fill:
+				#order complete, don't loop through the rest
+				break
+
+	elif order_type == 'sell' and order.limit_price <= best_bid:
+		# Buy order crossed the spread, there is a match
+		shares_to_fill = order.units
+		shares_filled = 0
+		#searching buy list from best to worst buy (highest price to lowest)
+		for i in range(len(buy_list)):
+
+			bid_price = buy_list[i].limit_price
+			ask_price = order.limit_price
+
+			midpoint = (ask_price + bid_price) / 2
+
+			shares_to_buy = order.units - order.units_fulfilled
+			shares_to_sell = buy_list[i].units - buy_list[i].units_fulfilled
+
+			shares_exchanged = min(shares_to_buy,shares_to_sell)
+			shares_filled = shares_filled + shares_exchanged
+
+			#increment shares exchanged
+			order.units_fulfilled = shares_exchanged
+			buy_list[i].units_fulfilled = buy_list[i].units_fulfilled + shares_exchanged
+			db.session.commit()
+
+			add_to_transactions(order.stock_symbol, order.id, buy_list[i].id, shares_exchanged, midpoint)
+
+			if shares_filled == shares_to_fill:
+				#order complete, don't loop through the rest
+				break
 	else:
 		# Order did not cross the spread
 		pass
@@ -166,7 +166,8 @@ class OrderResource(Resource):
 	       		#if changed, only then update order time
 		       	order.order_time = datetime.now()
 	       		order.user_id = 0
-	       		db.session.commit()  
+	       		db.session.commit()
+	       		matching(order, request.json["type"])
 	       		return { "statusCode": 200, "message": "Ok" }
 
 	       	else:

@@ -30,7 +30,7 @@ def best_price(orders):
 		options.append(item)
 
 	#if there were multiple options at best price, sort by time
-	options.sort(key=lambda x: x.datetime)
+	options.sort(key=lambda x: x.order_time)
 	return options[0].limit_price
 
 def matching(order, order_type):
@@ -109,17 +109,6 @@ def matching(order, order_type):
 class OrderResource(Resource):
 
     def post(self):    
-
-    	new_transaction = Transaction(
-	    	stock_symbol = "somethinggggg",
-	    	buy_order_id = 43,
-	    	sell_order_id = 5435,
-	    	units = 345345,
-	    	price = 54.54
-	    	)
-    	db.session.add(new_transaction)
-    	db.session.commit()
-
     	if request.json["type"] == "buy":
     		order = BuyOrder(
     			user_id = request.json["user_id"],
@@ -141,7 +130,7 @@ class OrderResource(Resource):
 	    	db.session.add(order)
 	    	db.session.commit()
     	
-    	# matching(order, request.json["type"])
+    	matching(order, request.json["type"])
 
     	return { "statusCode": 200, "message": "Ok" }
 

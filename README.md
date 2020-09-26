@@ -4,9 +4,13 @@ This is a stock trading service
 
 ## Installation
 
-Python must be installed
+Python 3.7 must be installed
 
 Then create a virtual envirnment, activate it and install dependencies.
+
+```bash
+pip install venv
+```
 
 ```bash
 python -m venv env

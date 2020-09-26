@@ -45,61 +45,90 @@ def matching(order, order_type):
 		# Buy order crossed the spread, there is a match
 		shares_to_fill = order.units
 		shares_filled = 0
-		#searching buy list from best to worst buy (highest price to lowest)
-		for i in range(len(sell_list)):
 
-			ask_price = sell_list[i].limit_price
-			bid_price = order.limit_price
+		#create a savepoint in case of race condition
+		db.session.begin_nested()
 
-			midpoint = (ask_price + bid_price) / 2
+		completed = False
+		
+		#run this loop until we've completed the transaction
+		while not(completed):
+			try:
+				#searching sell list from best to worst sell (lowest price to highest)
+				for i in range(len(sell_list)):
 
-			shares_to_buy = order.units - order.units_fulfilled
-			shares_to_sell = sell_list[i].units - sell_list[i].units_fulfilled
+					ask_price = sell_list[i].limit_price
+					bid_price = order.limit_price
 
-			shares_exchanged = 0
+					midpoint = (ask_price + bid_price) / 2
 
-			shares_exchanged = min(shares_to_buy, shares_to_sell)
-			shares_filled = shares_filled + shares_exchanged
+					shares_to_buy = order.units - order.units_fulfilled
+					shares_to_sell = sell_list[i].units - sell_list[i].units_fulfilled
 
-			#increment shares exchanged
-			order.units_fulfilled = shares_exchanged
-			sell_list[i].units_fulfilled = sell_list[i].units_fulfilled + order.units_fulfilled
-			db.session.commit()
+					shares_exchanged = 0
 
-			add_to_transactions(order.stock_symbol, order.id, sell_list[i].id, shares_exchanged, midpoint)
+					shares_exchanged = min(shares_to_buy, shares_to_sell)
+					shares_filled = shares_filled + shares_exchanged
 
-			if shares_filled == shares_to_fill:
-				#order complete, don't loop through the rest
-				break
+					#increment shares exchanged
+					order.units_fulfilled = shares_exchanged
+					sell_list[i].units_fulfilled = sell_list[i].units_fulfilled + order.units_fulfilled
+					db.session.commit()
+
+					add_to_transactions(order.stock_symbol, order.id, sell_list[i].id, shares_exchanged, midpoint)
+
+					if shares_filled == shares_to_fill:
+						#order complete, don't loop through the rest
+						break
+					completed = True
+			except Exception as e:
+				#the orders failed due to concurrent transaction, rollback to before exchange was attempted and try again
+				print (e)
+				db.session.rollback() 
 
 	elif order_type == 'sell' and order.limit_price <= best_bid:
 		# Buy order crossed the spread, there is a match
 		shares_to_fill = order.units
 		shares_filled = 0
-		#searching buy list from best to worst buy (highest price to lowest)
-		for i in range(len(buy_list)):
 
-			bid_price = buy_list[i].limit_price
-			ask_price = order.limit_price
+		#create a savepoint in case of race condition
+		db.session.begin_nested()
 
-			midpoint = (ask_price + bid_price) / 2
+		completed = False
+		
+		#run this loop until we've completed the transaction
+		while not(completed):
+			try:
+				#searching buy list from best to worst buy (highest price to lowest)
+				for i in range(len(buy_list)):
 
-			shares_to_buy = order.units - order.units_fulfilled
-			shares_to_sell = buy_list[i].units - buy_list[i].units_fulfilled
+					bid_price = buy_list[i].limit_price
+					ask_price = order.limit_price
 
-			shares_exchanged = min(shares_to_buy,shares_to_sell)
-			shares_filled = shares_filled + shares_exchanged
+					midpoint = (ask_price + bid_price) / 2
 
-			#increment shares exchanged
-			order.units_fulfilled = shares_exchanged
-			buy_list[i].units_fulfilled = buy_list[i].units_fulfilled + shares_exchanged
-			db.session.commit()
+					shares_to_buy = order.units - order.units_fulfilled
+					shares_to_sell = buy_list[i].units - buy_list[i].units_fulfilled
 
-			add_to_transactions(order.stock_symbol, order.id, buy_list[i].id, shares_exchanged, midpoint)
+					shares_exchanged = min(shares_to_buy,shares_to_sell)
+					shares_filled = shares_filled + shares_exchanged
 
-			if shares_filled == shares_to_fill:
-				#order complete, don't loop through the rest
-				break
+					#increment shares exchanged
+					order.units_fulfilled = shares_exchanged
+					buy_list[i].units_fulfilled = buy_list[i].units_fulfilled + shares_exchanged
+					db.session.commit()
+
+					add_to_transactions(order.stock_symbol, order.id, buy_list[i].id, shares_exchanged, midpoint)
+
+					if shares_filled == shares_to_fill:
+						#order complete, don't loop through the rest
+						break
+				#finished, and can exit loop
+				completed = True
+			except Exception as e:
+				#the orders failed due to concurrent transaction, rollback to before exchange was attempted and try again
+				print (e)
+				db.session.rollback() 
 	else:
 		# Order did not cross the spread
 		pass

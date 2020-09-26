@@ -20,13 +20,18 @@ source env/bin/activate
 pip install -r requirements.txt
 ```
 
-##Usage
+## Usage
 
 ```python
 from main import db
 db.create_all()
 exit()
 ```
+
+```bash
+python main.py
+```
+
 
 
 ## Assumptions: 

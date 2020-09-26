@@ -6,3 +6,7 @@ $ source env/bin/activate
 >>> from main import db
 >>> db.create_all()
 >>> exit()
+
+
+
+assumption: if user updates their order, the time is updated

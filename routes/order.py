@@ -41,7 +41,6 @@ def matching(order, order_type):
 		#nothing buy
 		return
 
-
 	if order_type == 'buy' and order.limit_price >= best_ask:
 		# Buy order crossed the spread, there is a match
 		shares_to_fill = order.units
@@ -104,7 +103,6 @@ def matching(order, order_type):
 	else:
 		# Order did not cross the spread
 		pass
-
 
 class OrderResource(Resource):
 
@@ -175,12 +173,22 @@ class OrderResource(Resource):
 
     def delete(self):
 
-    	if request.json["type"] == "buy": order = BuyOrder.query.get(request.json["id"])
-    	else : order = SellOrder.query.get(request.json["id"])
+    	try:
+    		if request.json["type"] == "buy": 
+    			order = BuyOrder.query.get(request.json["id"])
+    		else: 
+    			order = SellOrder.query.get(request.json["id"])
+    	except Exception as e:
+    		return {"statusCode":403, "message": "id not found"}
 
     	if order is None:
     		return {"statusCode":404, "message":"Order not found"}
     	else:
-    		db.session.delete(order)
-    		db.session.commit()
-    		return { "statusCode": 200, "message": "OK" }
+    		if order.units_fulfilled != 0:
+    			#order has been partially or fully fulfilled, can not delete
+    			return {"statusCode":403, "message":"Order cannot be deleted"}
+    		else:
+	    		db.session.delete(order)
+	    		db.session.commit()
+	    		return { "statusCode": 200, "message": "OK" }
+

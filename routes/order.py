@@ -9,104 +9,142 @@ from db.TransactionModel import Transaction, transaction_schema
 
 from app import db
 
-def match(self, sell, buy):
-	if buy >= self.orderbook.best_ask():
-	# Buy order crossed the spread
+def add_to_transactions(stock_symbol, buy_order_id, sell_order_id, units, price):
+ 	new_transaction = Transaction(
+    	stock_symbol = stock_symbol,
+    	buy_order_id = buy_order_id,
+    	sell_order_id = sell_order_id,
+    	units = units,
+    	price = price
+    	)
+ 	db.session.add(new_transaction)
+ 	db.session.commit()
+
+def best_price(orders):
+	options = []
+	best_price = orders[0].limit_price
+	for item in orders:
+		if item.limit_price != best_price:
+			#no more options at that price
+			exit()
+		options.append(item)
+
+	#if there were multiple options at best price, sort by time
+	options.sort(key=lambda x: x.datetime)
+	return options[0].limit_price
+
+def matching(order, order_type):
+
+	#add where clauses
+	sell_list = SellOrder.query.all()
+	sell_list.sort(key=lambda x: x.limit_price)
+
+	buy_list = BuyOrder.query.all()
+	buy_list.sort(key=lambda x: x.limit_price, reverse=True)
+
+	if order_type == 'buy' and order.limit_price >= best_price(sell_list):
+		# Buy order crossed the spread
 		filled = 0
 		consumed_asks = []
-		for i in range(len(self.orderbook.asks)):
-			ask = self.orderbook.asks[i]
+		for i in range(len(buy_list)):
+			ask = buy_list[i]
 
-			if ask.price > order.price:
+			if ask.limit_price > order.limit_price:
 				break # Price of ask is too high, stop filling order
-			elif filled == order.quantity:
+			elif filled == order.units:
 				break # Order was filled
 
-			if filled + ask.quantity <= order.quantity: # order not yet filled, ask will be consumed whole
-				filled += ask.quantity
-				trade = Trade(ask.price, ask.quantity)
-				self.trades.append(trade)
-				consumed_asks.append(ask)
-			elif filled + ask.quantity > order.quantity: # order is filled, ask will be consumed partially
-				volume = order.quantity-filled
+			if filled + ask.units <= order.units: # order not yet filled, ask will be consumed whole
+				filled += ask.units
+
+				#change database and add to transaction table
+				ask.units_fulfilled = ask.units
+				db.session.commit()
+				add_to_transactions(ask.stock_symbol, order.id, ask.id, ask.units, ask.limit_price)
+
+			elif filled + ask.units > order.units: # order is filled, ask will be consumed partially
+				volume = order.units-filled
 				filled += volume
-				trade = Trade(ask.price, volume)
-				self.trades.append(trade)
-				ask.quantity -= volume
 
-		# Place any remaining volume in LOB
-		if filled < order.quantity:
-			self.orderbook.add(Order("limit", "buy", order.price, order.quantity-filled))
+				#change database and add to transaction table
+				ask.units_fulfilled = ask.units_fulfilled + volume
+				db.session.commit()
+				add_to_transactions(ask.stock_symbol, order.id, ask.id, ask.units, ask.limit_price)
 
-		# Remove asks used for filling order
-		for ask in consumed_asks:
-			self.orderbook.remove(ask)
-
-
-	elif order.side == 'sell' and order.price <= self.orderbook.best_bid():
+	elif order_type == 'sell' and order.limit_price <= best_price(buy_list):
 
 		# Sell order crossed the spread
 		filled = 0
 		consumed_bids = []
-		for i in range(len(self.orderbook.bids)):
-			bid = self.orderbook.bids[i]
+		for i in range(len(sell_list)):
+			bid = sell_list[i]
 
-			if bid.price < order.price:
+			if bid.limit_price < order.limit_price:
 				break # Price of bid is too low, stop filling order
-			if filled == order.quantity:
+			if filled == order.units:
 				break # Order was filled
 
-			if filled + bid.quantity <= order.quantity: # order not yet filled, bid will be consumed whole
-				filled += bid.quantity
-				trade = Trade(bid.price, bid.quantity)
-				self.trades.append(trade)
-				consumed_bids.append(bid)
-			elif filled + bid.quantity > order.quantity: # order is filled, bid will be consumed partially
-				volume = order.quantity-filled
+			if filled + bid.units <= order.units: # order not yet filled, bid will be consumed whole
+				filled += bid.units
+
+				#change database and add to transaction table
+				bid.units_fulfilled = bid.units
+				db.session.commit()
+				add_to_transactions(ask.stock_symbol, bid.id, order.id, bid.units, bid.limit_price)
+
+			elif filled + bid.units > order.units: # order is filled, bid will be consumed partially
+				volume = order.units-filled
 				filled += volume
-				trade = Trade(bid.price, volume)
-				self.trades.append(trade)
-				bid.quantity -= volume
 
-		# Place any remaining volume in LOB
-		if filled < order.quantity:
-			self.orderbook.add(Order("limit", "sell", order.price, order.quantity-filled))
-
-		#Remove bids used for filling order
-		for bid in consumed_bids:
-			self.orderbook.remove(bid)
+				#change database and add to transaction table
+				bid.units_fulfilled = bid.units_fulfilled + volume
+				db.session.commit()
+				add_to_transactions(ask.stock_symbol, bid.id, order.id, bid.units, bid.limit_price)
 
 	else:
-		# Order did not cross the spread, place in order book
-		self.orderbook.add(order)
+		# Order did not cross the spread
+		pass
 
 
 class OrderResource(Resource):
 
     def post(self):    
 
+    	new_transaction = Transaction(
+	    	stock_symbol = "somethinggggg",
+	    	buy_order_id = 43,
+	    	sell_order_id = 5435,
+	    	units = 345345,
+	    	price = 54.54
+	    	)
+    	db.session.add(new_transaction)
+    	db.session.commit()
+
     	if request.json["type"] == "buy":
-    		new_order = BuyOrder(
+    		order = BuyOrder(
     			user_id = request.json["user_id"],
     			stock_symbol = request.json["stock_symbol"],
     			units = request.json["units"],
     			units_fulfilled = 0,
     			limit_price = request.json["limit_price"]
     		)
-    		db.session.add(new_order)
+    		db.session.add(order)
     		db.session.commit()
-    		return { "statusCode": 200, "message": "Ok" }
     	else:
-    		new_order = SellOrder(
+    		order = SellOrder(
     			user_id = request.json["user_id"],
     			stock_symbol = request.json["stock_symbol"],
     			units = request.json["units"],
     			units_fulfilled = 0,
     			limit_price = request.json["limit_price"]
     		)
-	    	db.session.add(new_order)
+	    	db.session.add(order)
 	    	db.session.commit()
-    		return { "statusCode": 200, "message": "Ok" }
+    	
+    	# matching(order, request.json["type"])
+
+    	return { "statusCode": 200, "message": "Ok" }
+
 
     def patch(self):
 

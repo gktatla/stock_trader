@@ -9,6 +9,77 @@ from db.TransactionModel import Transaction, transaction_schema
 
 from app import db
 
+def match(self, sell, buy):
+	if buy >= self.orderbook.best_ask():
+	# Buy order crossed the spread
+		filled = 0
+		consumed_asks = []
+		for i in range(len(self.orderbook.asks)):
+			ask = self.orderbook.asks[i]
+
+			if ask.price > order.price:
+				break # Price of ask is too high, stop filling order
+			elif filled == order.quantity:
+				break # Order was filled
+
+			if filled + ask.quantity <= order.quantity: # order not yet filled, ask will be consumed whole
+				filled += ask.quantity
+				trade = Trade(ask.price, ask.quantity)
+				self.trades.append(trade)
+				consumed_asks.append(ask)
+			elif filled + ask.quantity > order.quantity: # order is filled, ask will be consumed partially
+				volume = order.quantity-filled
+				filled += volume
+				trade = Trade(ask.price, volume)
+				self.trades.append(trade)
+				ask.quantity -= volume
+
+		# Place any remaining volume in LOB
+		if filled < order.quantity:
+			self.orderbook.add(Order("limit", "buy", order.price, order.quantity-filled))
+
+		# Remove asks used for filling order
+		for ask in consumed_asks:
+			self.orderbook.remove(ask)
+
+
+	elif order.side == 'sell' and order.price <= self.orderbook.best_bid():
+
+		# Sell order crossed the spread
+		filled = 0
+		consumed_bids = []
+		for i in range(len(self.orderbook.bids)):
+			bid = self.orderbook.bids[i]
+
+			if bid.price < order.price:
+				break # Price of bid is too low, stop filling order
+			if filled == order.quantity:
+				break # Order was filled
+
+			if filled + bid.quantity <= order.quantity: # order not yet filled, bid will be consumed whole
+				filled += bid.quantity
+				trade = Trade(bid.price, bid.quantity)
+				self.trades.append(trade)
+				consumed_bids.append(bid)
+			elif filled + bid.quantity > order.quantity: # order is filled, bid will be consumed partially
+				volume = order.quantity-filled
+				filled += volume
+				trade = Trade(bid.price, volume)
+				self.trades.append(trade)
+				bid.quantity -= volume
+
+		# Place any remaining volume in LOB
+		if filled < order.quantity:
+			self.orderbook.add(Order("limit", "sell", order.price, order.quantity-filled))
+
+		#Remove bids used for filling order
+		for bid in consumed_bids:
+			self.orderbook.remove(bid)
+
+	else:
+		# Order did not cross the spread, place in order book
+		self.orderbook.add(order)
+
 
 class OrderResource(Resource):
 

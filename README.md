@@ -36,7 +36,7 @@ exit()
 python main.py
 ```
 
-## To post a buy or sell order (localhost:5000/order):
+## To POST a buy or sell order (localhost:5000/order):
 ```bash
 {
 	"user_id": 2,
@@ -47,7 +47,7 @@ python main.py
 }
 ```
 
-## To edit an order, use patch with the id of the order (localhost:5000/order):
+## To edit an order, use PATCH with the id of the order (localhost:5000/order):
 ```bash
 {
 	"id": "2",
@@ -57,14 +57,13 @@ python main.py
 }
 ```
 
-## To delete an order (localhost:5000/order):
+## To DELETE an order (localhost:5000/order):
 ```bash
 {
 	"id": 2,
 	"type": "buy"
 }
 ```
-
 
 ## Assumptions: 
 	if user updates their order, the time is updated

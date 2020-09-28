@@ -36,6 +36,34 @@ exit()
 python main.py
 ```
 
+## To post a buy or sell order, change type as needed
+```bash
+{
+	"user_id": 2,
+	"stock_symbol": "zm",
+	"units": 150,
+	"limit_price": 50.00,
+	"type": "sell"
+}
+```
+
+## To edit an order, use patch with the id of the order:
+```bash
+{
+	"id": "2",
+	"stock_symbol": "zm",
+	"units": 20,
+	"limit_price": 20
+}
+```
+
+## To delete an order
+```bash
+{
+	"id": 2,
+	"type": "buy"
+}
+```
 
 
 ## Assumptions: 

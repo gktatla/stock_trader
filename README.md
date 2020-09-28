@@ -36,7 +36,7 @@ exit()
 python main.py
 ```
 
-## To post a buy or sell order, change type as needed
+## To post a buy or sell order (localhost:5000/order):
 ```bash
 {
 	"user_id": 2,
@@ -47,7 +47,7 @@ python main.py
 }
 ```
 
-## To edit an order, use patch with the id of the order:
+## To edit an order, use patch with the id of the order (localhost:5000/order):
 ```bash
 {
 	"id": "2",
@@ -57,7 +57,7 @@ python main.py
 }
 ```
 
-## To delete an order
+## To delete an order (localhost:5000/order):
 ```bash
 {
 	"id": 2,

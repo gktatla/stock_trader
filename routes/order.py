@@ -9,129 +9,127 @@ from db.TransactionModel import Transaction, transaction_schema
 
 from app import db
 
+
 def add_to_transactions(stock_symbol, buy_order_id, sell_order_id, units, price):
 
 	new_transaction = Transaction(
-    	stock_symbol = stock_symbol,
-    	buy_order_id = buy_order_id,
-    	sell_order_id = sell_order_id,
-    	units = units,
-    	price = price
-    	)
+		stock_symbol = stock_symbol,
+		buy_order_id = buy_order_id,
+		sell_order_id = sell_order_id,
+		units = units,
+		price = price
+	)
 	db.session.add(new_transaction)
 	db.session.commit()
 
 def matching(order, order_type):
 
-	#get only sell orders that have not been fulfilled completely, and order them by acesending price
-	sell_list = db.session.query(SellOrder).filter(SellOrder.units!=SellOrder.units_fulfilled).filter(SellOrder.stock_symbol==order.stock_symbol).order_by(SellOrder.limit_price.desc()).order_by(SellOrder.order_time).all()
+	db.session.begin_nested()
 
-	#get only buy orders that have not been fulfilled completely and order them by descending price
-	buy_list = db.session.query(BuyOrder).filter(BuyOrder.units!=BuyOrder.units_fulfilled).filter(SellOrder.stock_symbol==order.stock_symbol).order_by(BuyOrder.limit_price).all()
+	completed = False
 
-	if sell_list:
-		best_ask = sell_list[0].limit_price
-	else:
-		#nothing to sell
-		return
+	while not completed:
 
-	if buy_list:
-		best_bid = buy_list[0].limit_price
-	else:
-		#nothing buy
-		return
+		try:
+			#get only sell orders that have not been fulfilled completely, and order them by acesending price
+			sell_list = db.session.query(SellOrder).filter(SellOrder.units!=SellOrder.units_fulfilled).filter(SellOrder.stock_symbol==order.stock_symbol).with_for_update().order_by(SellOrder.limit_price.desc()).order_by(SellOrder.order_time).all()
 
-	if order_type == 'buy' and order.limit_price >= best_ask:
-		# Buy order crossed the spread, there is a match
-		shares_to_fill = order.units
-		shares_filled = 0
+			#get only buy orders that have not been fulfilled completely and order them by descending price
+			buy_list = db.session.query(BuyOrder).filter(BuyOrder.units!=BuyOrder.units_fulfilled).filter(BuyOrder.stock_symbol==order.stock_symbol).with_for_update().order_by(BuyOrder.limit_price).all()
 
-		#create a savepoint in case of race condition
-		db.session.begin_nested()
+			#if sell list is not empty, calculate best ask, otherwise return since nothing to sell
+			if sell_list: best_ask = sell_list[0].limit_price
+			else: return
 
-		completed = False
-		
-		#run this loop until we've completed the transaction
-		while not(completed):
-			try:
+			#if buy list is not empty, calculate best bid, otherwise return since nothing to buy
+			if buy_list: best_bid = buy_list[0].limit_price
+			else: return
+
+			if order_type == 'buy' and order.limit_price >= best_ask:
+				# Buy order crossed the spread, there is a match
+				shares_to_fill = order.units
+				shares_filled = 0
+				
+				#run this loop until we've completed the transaction
 				#searching sell list from best to worst sell (lowest price to highest)
 				for i in range(len(sell_list)):
 
-					ask_price = sell_list[i].limit_price
-					bid_price = order.limit_price
+					#get the sell order to update and lock it
+					sell_order_to_update = db.session.query(SellOrder).filter(SellOrder.id==sell_list[i].id).with_for_update().one()
+					#get the buy order to update and lock it
+					buy_order_to_update = db.session.query(BuyOrder).filter(BuyOrder.id==order.id).with_for_update().one()
 
-					midpoint = (ask_price + bid_price) / 2
+					#calculate price
+					midpoint = (sell_order_to_update.limit_price + buy_order_to_update.limit_price) / 2
 
-					shares_to_buy = order.units - order.units_fulfilled
-					shares_to_sell = sell_list[i].units - sell_list[i].units_fulfilled
+					#calculate shares to buy and sell
+					shares_to_buy = sell_order_to_update.units - sell_order_to_update.units_fulfilled
+					shares_to_sell = buy_order_to_update.units - buy_order_to_update.units_fulfilled
 
-					shares_exchanged = 0
-
+					#shares that can be exchanged is equal to the smaller of 2 units
 					shares_exchanged = min(shares_to_buy, shares_to_sell)
+
+					#increment shares filled
 					shares_filled = shares_filled + shares_exchanged
 
-					#increment shares exchanged
-					order.units_fulfilled = shares_exchanged
-					sell_list[i].units_fulfilled = sell_list[i].units_fulfilled + order.units_fulfilled
-					db.session.commit()
+					#increment shares filled in database
+					sell_order_to_update.units_fulfilled = sell_order_to_update.units_fulfilled + shares_exchanged
+					buy_order_to_update.units_fulfilled = shares_exchanged
 
-					add_to_transactions(order.stock_symbol, order.id, sell_list[i].id, shares_exchanged, midpoint)
+					db.session.commit()
+					add_to_transactions(buy_order_to_update.stock_symbol, buy_order_to_update.id, sell_order_to_update.id, shares_exchanged, midpoint)
 
 					if shares_filled == shares_to_fill:
 						#order complete, don't loop through the rest
 						break
-					completed = True
-			except Exception as e:
-				#the orders failed due to concurrent transaction, rollback to before exchange was attempted and try again
-				print (e)
-				db.session.rollback() 
 
-	elif order_type == 'sell' and order.limit_price <= best_bid:
-		# Buy order crossed the spread, there is a match
-		shares_to_fill = order.units
-		shares_filled = 0
-
-		#create a savepoint in case of race condition
-		db.session.begin_nested()
-
-		completed = False
-		
-		#run this loop until we've completed the transaction
-		while not(completed):
-			try:
+			elif order_type == 'sell' and order.limit_price <= best_bid:
+				# Buy order crossed the spread, there is a match
+				shares_to_fill = order.units
+				shares_filled = 0
+				
+				#run this loop until we've completed the transaction
 				#searching buy list from best to worst buy (highest price to lowest)
 				for i in range(len(buy_list)):
 
-					bid_price = buy_list[i].limit_price
-					ask_price = order.limit_price
+					#get the sell order to update and lock it
+					sell_order_to_update = db.session.query(SellOrder).filter(SellOrder.id==order.id).with_for_update().one()
+					#get the buy order to update and lock it
+					buy_order_to_update = db.session.query(BuyOrder).filter(BuyOrder.id==buy_list[i].id).with_for_update().one()
 
-					midpoint = (ask_price + bid_price) / 2
+					#calculate price
+					midpoint = (buy_order_to_update.limit_price + sell_order_to_update.limit_price) / 2
 
-					shares_to_buy = order.units - order.units_fulfilled
-					shares_to_sell = buy_list[i].units - buy_list[i].units_fulfilled
+					#calculate shares to buy and to sell
+					shares_to_buy = sell_order_to_update.units - sell_order_to_update.units_fulfilled
+					shares_to_sell = buy_order_to_update.units - buy_order_to_update.units_fulfilled
 
+					#shares that can be exchanged is equal to the smaller of the 2 units
 					shares_exchanged = min(shares_to_buy,shares_to_sell)
+
+					#increment shares filled
 					shares_filled = shares_filled + shares_exchanged
 
-					#increment shares exchanged
-					order.units_fulfilled = shares_exchanged
-					buy_list[i].units_fulfilled = buy_list[i].units_fulfilled + shares_exchanged
-					db.session.commit()
+					#increment shares filled in the database
+					sell_order_to_update.units_fulfilled = shares_exchanged
+					buy_order_to_update.units_fulfilled = shares_exchanged + buy_order_to_update.units_fulfilled
 
-					add_to_transactions(order.stock_symbol, order.id, buy_list[i].id, shares_exchanged, midpoint)
+					db.session.commit()
+					add_to_transactions(sell_order_to_update.stock_symbol, buy_order_to_update.id, sell_order_to_update.id, shares_exchanged, midpoint)
 
 					if shares_filled == shares_to_fill:
 						#order complete, don't loop through the rest
 						break
-				#finished, and can exit loop
-				completed = True
-			except Exception as e:
-				#the orders failed due to concurrent transaction, rollback to before exchange was attempted and try again
-				print (e)
-				db.session.rollback() 
-	else:
-		# Order did not cross the spread
-		pass
+
+			#order did not cross spread
+			else: pass
+
+			completed = True
+				
+		except Exception as e:
+			#the orders failed due to concurrent transaction, rollback to before exchange was attempted and try again
+			db.session.rollback() 
+
 
 class OrderResource(Resource):
 
@@ -156,7 +154,7 @@ class OrderResource(Resource):
     		)
 	    	db.session.add(order)
 	    	db.session.commit()
-    	
+
     	matching(order, request.json["type"])
 
     	return { "statusCode": 200, "message": "Ok" }
@@ -174,9 +172,13 @@ class OrderResource(Resource):
 
         #update the order
         else:
+
         	changed = False
+
         	for item in request.json:
+
                 #only attempt to edit stock_symbol, units or limit price as long as value given is not the same
+
 	       		if item == "stock_symbol" and order.stock_symbol != request.json[item]: 
 	       			order.stock_symbol = request.json[item]
 	       			changed = True
@@ -190,34 +192,44 @@ class OrderResource(Resource):
 	       			changed = True
 	       
 	       	if changed:
+
 	       		#if changed, only then update order time
+
 		       	order.order_time = datetime.now()
 	       		order.user_id = 0
 	       		db.session.commit()
+
 	       		matching(order, request.json["type"])
+
 	       		return { "statusCode": 200, "message": "Ok" }
 
 	       	else:
+
 	       		return { "statusCode": 403, "message": "No change in order" }
 
     def delete(self):
 
-    	try:
-    		if request.json["type"] == "buy": 
-    			order = BuyOrder.query.get(request.json["id"])
-    		else: 
-    			order = SellOrder.query.get(request.json["id"])
-    	except Exception as e:
-    		return {"statusCode":403, "message": "id not found"}
+    	#get order from the buy table or sell table
+
+    	if request.json["type"] == "buy": order = BuyOrder.query.get(request.json["id"])
+
+    	else: order = SellOrder.query.get(request.json["id"])
 
     	if order is None:
+
     		return {"statusCode":404, "message":"Order not found"}
+
     	else:
+
     		if order.units_fulfilled != 0:
+
     			#order has been partially or fully fulfilled, can not delete
     			return {"statusCode":403, "message":"Order cannot be deleted"}
+
     		else:
+
 	    		db.session.delete(order)
 	    		db.session.commit()
+
 	    		return { "statusCode": 200, "message": "OK" }
 

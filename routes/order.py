@@ -1,3 +1,4 @@
+
 from flask_restful import Api, Resource
 import json
 from datetime import datetime
@@ -31,11 +32,12 @@ def matching(order, order_type):
 	while not completed:
 
 		try:
-			#get only sell orders that have not been fulfilled completely, and order them by acesending price
-			sell_list = db.session.query(SellOrder).filter(SellOrder.units!=SellOrder.units_fulfilled).filter(SellOrder.stock_symbol==order.stock_symbol).with_for_update().order_by(SellOrder.limit_price.desc()).order_by(SellOrder.order_time).all()
 
-			#get only buy orders that have not been fulfilled completely and order them by descending price
-			buy_list = db.session.query(BuyOrder).filter(BuyOrder.units!=BuyOrder.units_fulfilled).filter(BuyOrder.stock_symbol==order.stock_symbol).with_for_update().order_by(BuyOrder.limit_price).order_by(BuyOrder.order_time).all()
+			#get only sell orders that have not been fulfilled completely, matching price and order them by acesending price
+			sell_list = db.session.query(SellOrder).filter(SellOrder.units!=SellOrder.units_fulfilled).filter(SellOrder.stock_symbol==order.stock_symbol).filter(SellOrder.limit_price<=order.limit_price).with_for_update().order_by(SellOrder.limit_price.desc()).order_by(SellOrder.order_time).all()
+
+			#get only buy orders that have not been fulfilled completely, matching price and order them by descending price
+			buy_list = db.session.query(BuyOrder).filter(BuyOrder.units!=BuyOrder.units_fulfilled).filter(BuyOrder.stock_symbol==order.stock_symbol).filter(BuyOrder.limit_price>=order.limit_price).with_for_update().order_by(BuyOrder.limit_price).order_by(BuyOrder.order_time).all()
 
 			#if sell list is not empty, calculate best ask, otherwise return since nothing to sell
 			if sell_list: best_ask = sell_list[0].limit_price
@@ -49,7 +51,7 @@ def matching(order, order_type):
 				# Buy order crossed the spread, there is a match
 				shares_to_fill = order.units
 				shares_filled = 0
-				
+
 				#run this loop until we've completed the transaction
 				#searching sell list from best to worst sell (lowest price to highest)
 				for i in range(len(sell_list)):
@@ -74,7 +76,7 @@ def matching(order, order_type):
 
 					#increment shares filled in database
 					sell_order_to_update.units_fulfilled = sell_order_to_update.units_fulfilled + shares_exchanged
-					buy_order_to_update.units_fulfilled = shares_exchanged
+					buy_order_to_update.units_fulfilled = buy_order_to_update.units_fulfilled + shares_exchanged
 
 					db.session.commit()
 					add_to_transactions(buy_order_to_update.stock_symbol, buy_order_to_update.id, sell_order_to_update.id, shares_exchanged, midpoint)
@@ -111,7 +113,7 @@ def matching(order, order_type):
 					shares_filled = shares_filled + shares_exchanged
 
 					#increment shares filled in the database
-					sell_order_to_update.units_fulfilled = shares_exchanged
+					sell_order_to_update.units_fulfilled = sell_order_to_update.units_fulfilled + shares_exchanged
 					buy_order_to_update.units_fulfilled = shares_exchanged + buy_order_to_update.units_fulfilled
 
 					db.session.commit()
@@ -233,4 +235,3 @@ class OrderResource(Resource):
 	    		db.session.commit()
 
 	    		return { "statusCode": 200, "message": "OK" }
-

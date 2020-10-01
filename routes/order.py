@@ -35,15 +35,15 @@ def matching(order, order_type):
 			sell_list = db.session.query(SellOrder).filter(SellOrder.units!=SellOrder.units_fulfilled).filter(SellOrder.stock_symbol==order.stock_symbol).with_for_update().order_by(SellOrder.limit_price.desc()).order_by(SellOrder.order_time).all()
 
 			#get only buy orders that have not been fulfilled completely and order them by descending price
-			buy_list = db.session.query(BuyOrder).filter(BuyOrder.units!=BuyOrder.units_fulfilled).filter(BuyOrder.stock_symbol==order.stock_symbol).with_for_update().order_by(BuyOrder.limit_price).all()
+			buy_list = db.session.query(BuyOrder).filter(BuyOrder.units!=BuyOrder.units_fulfilled).filter(BuyOrder.stock_symbol==order.stock_symbol).with_for_update().order_by(BuyOrder.limit_price).order_by(BuyOrder.order_time).all()
 
 			#if sell list is not empty, calculate best ask, otherwise return since nothing to sell
 			if sell_list: best_ask = sell_list[0].limit_price
-			else: return
+			else: return "no sell list"
 
 			#if buy list is not empty, calculate best bid, otherwise return since nothing to buy
 			if buy_list: best_bid = buy_list[0].limit_price
-			else: return
+			else: return "no buy list"
 
 			if order_type == 'buy' and order.limit_price >= best_ask:
 				# Buy order crossed the spread, there is a match
@@ -122,7 +122,8 @@ def matching(order, order_type):
 						break
 
 			#order did not cross spread
-			else: pass
+			else: 
+				return "order has no match"
 
 			completed = True
 				

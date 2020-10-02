@@ -1,4 +1,3 @@
-
 from flask_restful import Api, Resource
 import json
 from datetime import datetime
@@ -57,13 +56,14 @@ def matching(order, order_type):
 				.all()
 			)
 
-			#if sell list is not empty, calculate best ask, otherwise return since nothing to sell
-			if sell_list: best_ask = sell_list[0].limit_price
-			else: return "no sell list"
-
-			#if buy list is not empty, calculate best bid, otherwise return since nothing to buy
-			if buy_list: best_bid = buy_list[0].limit_price
-			else: return "no buy list"
+			if order_type == 'buy':
+				#if sell list is not empty, calculate best ask, otherwise return since nothing to sell
+				if sell_list: best_ask = sell_list[0].limit_price
+				else: return "no sell list"
+			else:
+				#if buy list is not empty, calculate best bid, otherwise return since nothing to buy
+				if buy_list: best_bid = buy_list[0].limit_price
+				else: return "no buy list"
 
 			if order_type == 'buy' and order.limit_price >= best_ask:
 				# Buy order crossed the spread, there is a match
@@ -161,7 +161,8 @@ class OrderResource(Resource):
     			stock_symbol = request.json["stock_symbol"],
     			units = request.json["units"],
     			units_fulfilled = 0,
-    			limit_price = request.json["limit_price"]
+    			limit_price = request.json["limit_price"],
+    			order_time = datetime.now()
     		)
     		db.session.add(order)
     		db.session.commit()
@@ -171,7 +172,8 @@ class OrderResource(Resource):
     			stock_symbol = request.json["stock_symbol"],
     			units = request.json["units"],
     			units_fulfilled = 0,
-    			limit_price = request.json["limit_price"]
+    			limit_price = request.json["limit_price"],
+    			order_time = datetime.now()
     		)
 	    	db.session.add(order)
 	    	db.session.commit()

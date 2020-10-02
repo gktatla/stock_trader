@@ -33,11 +33,29 @@ def matching(order, order_type):
 
 		try:
 
-			#get only sell orders that have not been fulfilled completely, matching price and order them by acesending price
-			sell_list = db.session.query(SellOrder).filter(SellOrder.units!=SellOrder.units_fulfilled).filter(SellOrder.stock_symbol==order.stock_symbol).filter(SellOrder.limit_price<=order.limit_price).with_for_update().order_by(SellOrder.limit_price.desc()).order_by(SellOrder.order_time).all()
+			# get only sell orders that have not been fulfilled completely, and order them by acesending price, make sure it's not same user
 
-			#get only buy orders that have not been fulfilled completely, matching price and order them by descending price
-			buy_list = db.session.query(BuyOrder).filter(BuyOrder.units!=BuyOrder.units_fulfilled).filter(BuyOrder.stock_symbol==order.stock_symbol).filter(BuyOrder.limit_price>=order.limit_price).with_for_update().order_by(BuyOrder.limit_price).order_by(BuyOrder.order_time).all()
+			sell_list=(db.session.query(SellOrder)
+				.filter(SellOrder.units>SellOrder.units_fulfilled)
+				.filter(SellOrder.stock_symbol==order.stock_symbol)
+				.filter(SellOrder.user_id!=order.user_id)
+				.filter(SellOrder.limit_price<=order.limit_price)
+				.with_for_update().order_by(SellOrder.limit_price)
+				.order_by(SellOrder.order_time)
+				.all()
+			)
+
+			# get only buy orders that have not been fulfilled completely and order them by descending price, make sure it's not same user
+			buy_list=(db.session.query(BuyOrder)
+				.filter(BuyOrder.units > BuyOrder.units_fulfilled)
+				.filter(BuyOrder.stock_symbol == order.stock_symbol)
+				.filter(BuyOrder.user_id != order.user_id)
+				.filter(BuyOrder.limit_price >= order.limit_price)
+				.with_for_update()
+				.order_by(BuyOrder.limit_price.desc())
+				.order_by(BuyOrder.order_time)
+				.all()
+			)
 
 			#if sell list is not empty, calculate best ask, otherwise return since nothing to sell
 			if sell_list: best_ask = sell_list[0].limit_price

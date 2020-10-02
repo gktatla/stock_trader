@@ -184,7 +184,6 @@ def matching(order, order_type):
 			#when a row is locked, it wont return in the query even if orders are unfullfilled
 			time.sleep(2)
 
-
 class OrderResource(Resource):
 
     def post(self):    

@@ -9,6 +9,7 @@ from db.TransactionModel import Transaction, transaction_schema
 
 from app import db
 
+import time
 
 def add_to_transactions(stock_symbol, buy_order_id, sell_order_id, units, price):
 
@@ -24,11 +25,14 @@ def add_to_transactions(stock_symbol, buy_order_id, sell_order_id, units, price)
 
 def matching(order, order_type):
 
-	db.session.begin_nested()
-
 	completed = False
+	transactions = []
 
 	while not completed:
+
+		print ("try again")
+
+		db.session.begin_nested()
 
 		try:
 
@@ -39,7 +43,7 @@ def matching(order, order_type):
 				.filter(SellOrder.stock_symbol==order.stock_symbol)
 				.filter(SellOrder.user_id!=order.user_id)
 				.filter(SellOrder.limit_price<=order.limit_price)
-				.with_for_update().order_by(SellOrder.limit_price)
+				.order_by(SellOrder.limit_price)
 				.order_by(SellOrder.order_time)
 				.all()
 			)
@@ -50,7 +54,6 @@ def matching(order, order_type):
 				.filter(BuyOrder.stock_symbol == order.stock_symbol)
 				.filter(BuyOrder.user_id != order.user_id)
 				.filter(BuyOrder.limit_price >= order.limit_price)
-				.with_for_update()
 				.order_by(BuyOrder.limit_price.desc())
 				.order_by(BuyOrder.order_time)
 				.all()
@@ -58,12 +61,22 @@ def matching(order, order_type):
 
 			if order_type == 'buy':
 				#if sell list is not empty, calculate best ask, otherwise return since nothing to sell
-				if sell_list: best_ask = sell_list[0].limit_price
-				else: return "no sell list"
-			else:
+				if sell_list: 
+					best_ask = sell_list[0].limit_price
+					#get the buy order to update and lock it
+					buy_order_to_update = db.session.query(BuyOrder).filter(BuyOrder.id==order.id).with_for_update().one()
+				else: 
+					return "no sell list"
+
+			elif order_type == 'sell':
 				#if buy list is not empty, calculate best bid, otherwise return since nothing to buy
-				if buy_list: best_bid = buy_list[0].limit_price
-				else: return "no buy list"
+				if buy_list: 
+					best_bid = buy_list[0].limit_price
+					#get the sell order to update and lock it
+					sell_order_to_update = db.session.query(SellOrder).filter(SellOrder.id==order.id).with_for_update().one()
+
+				else: 
+					return "no buy list"
 
 			if order_type == 'buy' and order.limit_price >= best_ask:
 				# Buy order crossed the spread, there is a match
@@ -76,8 +89,6 @@ def matching(order, order_type):
 
 					#get the sell order to update and lock it
 					sell_order_to_update = db.session.query(SellOrder).filter(SellOrder.id==sell_list[i].id).with_for_update().one()
-					#get the buy order to update and lock it
-					buy_order_to_update = db.session.query(BuyOrder).filter(BuyOrder.id==order.id).with_for_update().one()
 
 					#calculate price
 					midpoint = (sell_order_to_update.limit_price + buy_order_to_update.limit_price) / 2
@@ -96,11 +107,19 @@ def matching(order, order_type):
 					sell_order_to_update.units_fulfilled = sell_order_to_update.units_fulfilled + shares_exchanged
 					buy_order_to_update.units_fulfilled = buy_order_to_update.units_fulfilled + shares_exchanged
 
-					db.session.commit()
-					add_to_transactions(buy_order_to_update.stock_symbol, buy_order_to_update.id, sell_order_to_update.id, shares_exchanged, midpoint)
+					transaction = Transaction(
+						stock_symbol = buy_order_to_update.stock_symbol,
+						buy_order_id = buy_order_to_update.id,
+						sell_order_id = sell_order_to_update.id,
+						units = shares_exchanged,
+						price = midpoint
+					)
+
+					transactions.append(transaction)
 
 					if shares_filled == shares_to_fill:
 						#order complete, don't loop through the rest
+						print ("shares filled")
 						break
 
 			elif order_type == 'sell' and order.limit_price <= best_bid:
@@ -112,8 +131,6 @@ def matching(order, order_type):
 				#searching buy list from best to worst buy (highest price to lowest)
 				for i in range(len(buy_list)):
 
-					#get the sell order to update and lock it
-					sell_order_to_update = db.session.query(SellOrder).filter(SellOrder.id==order.id).with_for_update().one()
 					#get the buy order to update and lock it
 					buy_order_to_update = db.session.query(BuyOrder).filter(BuyOrder.id==buy_list[i].id).with_for_update().one()
 
@@ -134,11 +151,19 @@ def matching(order, order_type):
 					sell_order_to_update.units_fulfilled = sell_order_to_update.units_fulfilled + shares_exchanged
 					buy_order_to_update.units_fulfilled = shares_exchanged + buy_order_to_update.units_fulfilled
 
-					db.session.commit()
-					add_to_transactions(sell_order_to_update.stock_symbol, buy_order_to_update.id, sell_order_to_update.id, shares_exchanged, midpoint)
+					transaction = Transaction(
+						stock_symbol = sell_order_to_update.stock_symbol,
+						buy_order_id = buy_order_to_update.id,
+						sell_order_id = sell_order_to_update.id,
+						units = shares_exchanged,
+						price = midpoint
+					)
+
+					transactions.append(transaction)
 
 					if shares_filled == shares_to_fill:
 						#order complete, don't loop through the rest
+						print ("shares filled")
 						break
 
 			#order did not cross spread
@@ -146,10 +171,18 @@ def matching(order, order_type):
 				return "order has no match"
 
 			completed = True
+
+			for item in transactions:
+				db.session.add(item)
+
+			db.session.commit()
 				
 		except Exception as e:
 			#the orders failed due to concurrent transaction, rollback to before exchange was attempted and try again
 			db.session.rollback() 
+			#this is for when a row is locked, to wait for it to unlock so the buy/sell list doesn't falsely come up empty
+			#when a row is locked, it wont return in the query even if orders are unfullfilled
+			time.sleep(2)
 
 
 class OrderResource(Resource):
